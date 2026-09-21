@@ -1,5 +1,7 @@
 # org-time-analytics
 
+<img width="683" height="485" alt="image" src="https://github.com/user-attachments/assets/acef48a2-7ad7-4cf5-ad04-2a8b3d723156" />
+
 `org-time-analytics` is an interactive time report for Org mode. It totals
 active timestamp ranges such as:
 
