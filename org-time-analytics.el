@@ -393,13 +393,11 @@ When PREVIOUS is non-nil, also show the percentage change from it."
 
 (defun org-time-analytics-report (from to)
   "Show time grouped by `org-time-analytics-group-by' between FROM and TO.
-Interactively, default to the current Monday through next Monday."
+Interactively, default to seven days ago through tomorrow."
   (interactive
    (let* ((today (org-today))
-          (monday (- today (mod (1- (calendar-day-of-week
-                                     (calendar-gregorian-from-absolute today))) 7)))
-          (default-from (org-time-analytics--absolute-time monday))
-          (default-to (org-time-analytics--absolute-time (+ monday 7))))
+          (default-from (org-time-analytics--absolute-time (- today 7)))
+          (default-to (org-time-analytics--absolute-time (1+ today))))
      (list (org-read-date nil t nil "From: " default-from)
            (org-read-date nil t nil "To (exclusive): " default-to))))
   (with-current-buffer (get-buffer-create org-time-analytics-buffer-name)

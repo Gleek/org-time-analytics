@@ -41,7 +41,7 @@ With the built-in `package-vc` via `use-package` (Emacs 30 or later):
 ```
 
 Run `M-x org-time-analytics-report`, then choose the start and exclusive end
-dates. By default the prompt suggests the current Monday through next Monday.
+dates. By default the prompt suggests seven days ago through tomorrow.
 
 ## Report controls
 
