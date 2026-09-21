@@ -8,6 +8,12 @@
   (should (equal "1h" (org-time-analytics--duration 60)))
   (should (equal "3h20m" (org-time-analytics--duration 200))))
 
+(ert-deftest org-time-analytics-format-integer-change ()
+  (should (equal "+19%" (substring-no-properties
+                         (org-time-analytics--change 1320 1110))))
+  (should (equal "-11%" (substring-no-properties
+                         (org-time-analytics--change 615 690)))))
+
 (ert-deftest org-time-analytics-groups-entry ()
   (with-temp-buffer
     (org-mode)

@@ -4,7 +4,7 @@
 
 ;; Author: Umar Ahmad <Gleek@users.noreply.github.com>
 ;; Maintainer: Umar Ahmad <Gleek@users.noreply.github.com>
-;; Version: 0.1.0
+;; Version: 0.1.1
 ;; Package-Requires: ((emacs "29.1") (org "9.6") (org-ql "0.8"))
 ;; Keywords: calendar, outlines, convenience
 ;; URL: https://github.com/Gleek/org-time-analytics
@@ -210,7 +210,7 @@ FROM is inclusive and TO is exclusive.  FILES defaults to
   "Format the change from PREVIOUS minutes to MINUTES."
   (cond ((zerop previous) (propertize "new" 'face 'success))
         ((= minutes previous) "0%")
-        (t (let ((change (round (* 100.0 (/ (- minutes previous) previous)))))
+        (t (let ((change (round (/ (* 100.0 (- minutes previous)) previous))))
              (propertize (format "%+d%%" change)
                          'face (if (> change 0) 'success 'error))))))
 
