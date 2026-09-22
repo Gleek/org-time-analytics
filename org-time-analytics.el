@@ -86,6 +86,8 @@ Tasks with no time in the preceding period have a blank Change column."
 (defvar-local org-time-analytics--expanded-tags nil)
 (defvar-local org-time-analytics--groups nil)
 (defvar-local org-time-analytics--group-by nil)
+(defvar-local org-time-analytics--accounted-minutes 0)
+(defvar-local org-time-analytics--previous-accounted-minutes 0)
 
 (defun org-time-analytics--absolute-time (day)
   "Return midnight on absolute calendar DAY."
@@ -194,8 +196,25 @@ FROM is inclusive and TO is exclusive.  FILES defaults to
                                 (plist-get group :minutes)))
           (org-time-analytics-entries from to files)))
 
+(defun org-time-analytics--accounted-minutes (groups)
+  "Return total minutes covered by GROUPS, counting each entry once.
+An entry credited to several groups (for instance a heading with more
+than one included tag) is not double-counted."
+  (let ((seen (make-hash-table :test #'equal))
+        (total 0))
+    (dolist (group groups)
+      (dolist (entry (plist-get group :entries))
+        (let ((key (org-time-analytics--entry-key entry)))
+          (unless (gethash key seen)
+            (puthash key t seen)
+            (cl-incf total (plist-get entry :minutes))))))
+    total))
+
 (defun org-time-analytics--report-groups (from to &optional group-by)
-  "Return groups for FROM to TO with changes from the preceding period."
+  "Return a cons (GROUPS . ACCOUNTED) for FROM to TO.
+GROUPS carries changes from the preceding period.  ACCOUNTED is a cons
+of accounted minutes for this period and for the preceding period of
+the same length."
   (let* ((groups (org-time-analytics-entries from to nil group-by))
          (previous-from (time-subtract from (time-subtract to from)))
          (previous (org-time-analytics-entries previous-from from nil group-by))
@@ -208,14 +227,17 @@ FROM is inclusive and TO is exclusive.  FILES defaults to
         (dolist (entry (plist-get group :entries))
           (puthash (org-time-analytics--entry-key entry)
                    (plist-get entry :minutes) previous-by-task))))
-    (dolist (group groups groups)
+    (dolist (group groups)
       (plist-put group :previous-minutes
                  (gethash (plist-get group :tag) previous-by-tag 0))
       (when org-time-analytics-show-task-changes
         (dolist (entry (plist-get group :entries))
           (plist-put entry :previous-minutes
                      (gethash (org-time-analytics--entry-key entry)
-                              previous-by-task)))))))
+                              previous-by-task)))))
+    (cons groups
+          (cons (org-time-analytics--accounted-minutes groups)
+                (org-time-analytics--accounted-minutes previous)))))
 
 (defun org-time-analytics--entry-key (entry)
   "Return a stable source-heading key for ENTRY."
@@ -268,21 +290,40 @@ there is no prior duration."
    (plist-get entry :previous-minutes)
    org-time-analytics-show-task-changes))
 
+(defun org-time-analytics--accounted-share (minutes span-minutes)
+  "Format MINUTES accounted for out of SPAN-MINUTES as a duration and share."
+  (format "%s of %s (%d%%)"
+          (org-time-analytics--duration minutes)
+          (org-time-analytics--duration span-minutes)
+          (if (zerop span-minutes) 0
+            (round (/ (* 100.0 minutes) span-minutes)))))
+
 (defun org-time-analytics--render ()
   "Render the current time report."
-  (let ((inhibit-read-only t)
-        (line (line-number-at-pos))
-        (previous-from
-         (time-subtract org-time-analytics--from
-                        (time-subtract org-time-analytics--to
-                                       org-time-analytics--from))))
+  (let* ((inhibit-read-only t)
+         (line (line-number-at-pos))
+         (span-minutes (/ (float-time (time-subtract org-time-analytics--to
+                                                      org-time-analytics--from))
+                          60.0))
+         (previous-from
+          (time-subtract org-time-analytics--from
+                         (time-subtract org-time-analytics--to
+                                        org-time-analytics--from))))
     (erase-buffer)
-    (insert (format "Time by %s: %s to %s\nCompared with: %s to %s\n\n"
+    (insert (format "Time by %s: %s to %s\nCompared with: %s to %s\n"
                     (org-time-analytics--group-description)
                     (format-time-string "%F" org-time-analytics--from)
                     (format-time-string "%F" org-time-analytics--to)
                     (format-time-string "%F" previous-from)
                     (format-time-string "%F" org-time-analytics--from)))
+    (insert (format "Accounted: %s vs previous %s (%s)\n\n"
+                    (org-time-analytics--accounted-share
+                     org-time-analytics--accounted-minutes span-minutes)
+                    (org-time-analytics--accounted-share
+                     org-time-analytics--previous-accounted-minutes span-minutes)
+                    (org-time-analytics--change
+                     org-time-analytics--accounted-minutes
+                     org-time-analytics--previous-accounted-minutes)))
     (insert (propertize
              "TAB/RET expand · RET visit · t add tag · G group · g refresh · b/f period · . reset\n\n"
              'face 'shadow))
@@ -341,10 +382,12 @@ there is no prior duration."
 (defun org-time-analytics-refresh ()
   "Requery Org files and refresh the report."
   (interactive)
-  (setq org-time-analytics--groups
-        (org-time-analytics--report-groups org-time-analytics--from
-                                           org-time-analytics--to
-                                           org-time-analytics--group-by))
+  (let ((result (org-time-analytics--report-groups org-time-analytics--from
+                                                    org-time-analytics--to
+                                                    org-time-analytics--group-by)))
+    (setq org-time-analytics--groups (car result)
+          org-time-analytics--accounted-minutes (car (cdr result))
+          org-time-analytics--previous-accounted-minutes (cdr (cdr result))))
   (org-time-analytics--render))
 
 (defun org-time-analytics--group-description ()
@@ -455,10 +498,8 @@ Interactively, default to seven days ago through tomorrow."
           org-time-analytics--initial-from from
           org-time-analytics--initial-to to
           org-time-analytics--group-by org-time-analytics-group-by
-          org-time-analytics--expanded-tags nil
-          org-time-analytics--groups
-          (org-time-analytics--report-groups from to org-time-analytics-group-by))
-    (org-time-analytics--render)
+          org-time-analytics--expanded-tags nil)
+    (org-time-analytics-refresh)
     (pop-to-buffer (current-buffer))))
 
 (provide 'org-time-analytics)
