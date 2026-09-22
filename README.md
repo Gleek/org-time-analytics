@@ -10,7 +10,8 @@ active timestamp ranges such as:
 <2026-09-20 Sun 15:00-16:30>
 ```
 
-<img width="683" height="485" alt="image" src="https://github.com/user-attachments/assets/acef48a2-7ad7-4cf5-ad04-2a8b3d723156" />
+<img width="693" height="598" alt="image" src="https://github.com/user-attachments/assets/f7abf4c5-3f44-489d-aa5f-625de539d9d4" />
+
 
 Reports can group entries by tag, TODO state, CATEGORY, or any Org property.
 Each group expands to its source headings, and the report compares the selected
