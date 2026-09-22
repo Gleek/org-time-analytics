@@ -72,6 +72,14 @@ shows a flat task list."
                  (cons (const property) string))
   :group 'org-time-analytics)
 
+(defcustom org-time-analytics-hours-per-day 24
+  "Hours per day counted as the accounted-time denominator.
+The default of 24 measures accounted time against the full wall-clock
+span.  Set it to a smaller number, such as a working day's length, to
+measure accounted time against realistically available hours instead."
+  :type 'number
+  :group 'org-time-analytics)
+
 (defcustom org-time-analytics-show-task-changes t
   "Whether expanded task rows show changes from the preceding period.
 Tasks with no time in the preceding period have a blank Change column."
@@ -302,9 +310,10 @@ there is no prior duration."
   "Render the current time report."
   (let* ((inhibit-read-only t)
          (line (line-number-at-pos))
-         (span-minutes (/ (float-time (time-subtract org-time-analytics--to
-                                                      org-time-analytics--from))
-                          60.0))
+         (span-minutes (* (/ (float-time (time-subtract org-time-analytics--to
+                                                         org-time-analytics--from))
+                             86400.0)
+                          org-time-analytics-hours-per-day 60))
          (previous-from
           (time-subtract org-time-analytics--from
                          (time-subtract org-time-analytics--to
