@@ -321,20 +321,25 @@ there is no prior duration."
                          (time-subtract org-time-analytics--to
                                         org-time-analytics--from))))
     (erase-buffer)
-    (insert (format "Time by %s: %s to %s\nCompared with: %s to %s\n"
-                    (org-time-analytics--group-description)
-                    (format-time-string "%F" org-time-analytics--from)
-                    (format-time-string "%F" org-time-analytics--to)
-                    (format-time-string "%F" previous-from)
-                    (format-time-string "%F" org-time-analytics--from)))
-    (insert (format "Accounted: %s vs previous %s (%s)\n\n"
-                    (org-time-analytics--accounted-share
-                     org-time-analytics--accounted-minutes span-minutes)
-                    (org-time-analytics--accounted-share
-                     org-time-analytics--previous-accounted-minutes span-minutes)
-                    (org-time-analytics--change
-                     org-time-analytics--accounted-minutes
-                     org-time-analytics--previous-accounted-minutes)))
+    (let* ((labels (list (format "Time by %s" (org-time-analytics--group-description))
+                         "Compared with"
+                         "Accounted"))
+           (width (apply #'max (mapcar #'string-width labels))))
+      (cl-destructuring-bind (time-label compared-label accounted-label) labels
+        (insert (format "%s: %s to %s\n" (string-pad time-label width)
+                        (format-time-string "%F" org-time-analytics--from)
+                        (format-time-string "%F" org-time-analytics--to)))
+        (insert (format "%s: %s to %s\n" (string-pad compared-label width)
+                        (format-time-string "%F" previous-from)
+                        (format-time-string "%F" org-time-analytics--from)))
+        (insert (format "%s: %s vs previous %s (%s)\n\n" (string-pad accounted-label width)
+                        (org-time-analytics--accounted-share
+                         org-time-analytics--accounted-minutes span-minutes)
+                        (org-time-analytics--accounted-share
+                         org-time-analytics--previous-accounted-minutes span-minutes)
+                        (org-time-analytics--change
+                         org-time-analytics--accounted-minutes
+                         org-time-analytics--previous-accounted-minutes)))))
     (insert (propertize
              "TAB/RET expand · RET visit · t add tag · G group · g refresh · b/f period · . reset\n\n"
              'face 'shadow))
