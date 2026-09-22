@@ -300,11 +300,13 @@ there is no prior duration."
 
 (defun org-time-analytics--accounted-share (minutes span-minutes)
   "Format MINUTES accounted for out of SPAN-MINUTES as a duration and share."
-  (format "%s of %s (%d%%)"
-          (org-time-analytics--duration minutes)
+  (format "%s of %s (%s)"
+          (propertize (org-time-analytics--duration minutes) 'face 'bold)
           (org-time-analytics--duration span-minutes)
-          (if (zerop span-minutes) 0
-            (round (/ (* 100.0 minutes) span-minutes)))))
+          (propertize (format "%d%%"
+                              (if (zerop span-minutes) 0
+                                (round (/ (* 100.0 minutes) span-minutes))))
+                      'face 'bold)))
 
 (defun org-time-analytics--render ()
   "Render the current time report."
