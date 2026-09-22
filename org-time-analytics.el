@@ -64,10 +64,18 @@ credited to each tag."
 
 (defcustom org-time-analytics-group-by 'tag
   "Default criterion used to group report entries.
-The value may be `tag', `todo', `category', or a cons whose car is
-`property' and whose cdr is a property-name string."
-  :type '(choice (const tag) (const todo) (const category)
+The value may be nil, `tag', `todo', `category', or a cons whose car
+is `property' and whose cdr is a property-name string.  A nil value
+shows a flat task list."
+  :type '(choice (const :tag "No grouping" nil)
+                 (const tag) (const todo) (const category)
                  (cons (const property) string))
+  :group 'org-time-analytics)
+
+(defcustom org-time-analytics-show-task-changes t
+  "Whether expanded task rows show changes from the preceding period.
+Tasks with no time in the preceding period have a blank Change column."
+  :type 'boolean
   :group 'org-time-analytics)
 
 (defvar org-time-analytics-buffer-name "*Org time report*")
@@ -127,6 +135,7 @@ The value may be `tag', `todo', `category', or a cons whose car is
 (defun org-time-analytics--entry-groups (group-by)
   "Return group names for the current entry according to GROUP-BY."
   (pcase group-by
+    ('nil (list nil))
     ('tag
      (let ((tags (org-get-tags nil nil)))
        (when org-time-analytics-tags
@@ -138,7 +147,8 @@ The value may be `tag', `todo', `category', or a cons whose car is
      (list (or (org-entry-get nil property t) "none")))
     (_ (error "Invalid grouping criterion: %S" group-by))))
 
-(defun org-time-analytics-entries (from to &optional files group-by)
+(cl-defun org-time-analytics-entries
+    (from to &optional files (group-by org-time-analytics-group-by))
   "Return time-report groups for Org timestamps from FROM to TO.
 FROM is inclusive and TO is exclusive.  FILES defaults to
 `org-time-analytics-files'."
@@ -189,13 +199,28 @@ FROM is inclusive and TO is exclusive.  FILES defaults to
   (let* ((groups (org-time-analytics-entries from to nil group-by))
          (previous-from (time-subtract from (time-subtract to from)))
          (previous (org-time-analytics-entries previous-from from nil group-by))
-         (previous-by-tag (make-hash-table :test #'equal)))
+         (previous-by-tag (make-hash-table :test #'equal))
+         (previous-by-task (make-hash-table :test #'equal)))
     (dolist (group previous)
       (puthash (plist-get group :tag) (plist-get group :minutes)
-               previous-by-tag))
+               previous-by-tag)
+      (when org-time-analytics-show-task-changes
+        (dolist (entry (plist-get group :entries))
+          (puthash (org-time-analytics--entry-key entry)
+                   (plist-get entry :minutes) previous-by-task))))
     (dolist (group groups groups)
       (plist-put group :previous-minutes
-                 (gethash (plist-get group :tag) previous-by-tag 0)))))
+                 (gethash (plist-get group :tag) previous-by-tag 0))
+      (when org-time-analytics-show-task-changes
+        (dolist (entry (plist-get group :entries))
+          (plist-put entry :previous-minutes
+                     (gethash (org-time-analytics--entry-key entry)
+                              previous-by-task)))))))
+
+(defun org-time-analytics--entry-key (entry)
+  "Return a stable source-heading key for ENTRY."
+  (let ((marker (plist-get entry :marker)))
+    (cons (marker-buffer marker) (marker-position marker))))
 
 (defun org-time-analytics--duration (minutes)
   "Format MINUTES as a compact duration."
@@ -208,23 +233,40 @@ FROM is inclusive and TO is exclusive.  FILES defaults to
 
 (defun org-time-analytics--change (minutes previous)
   "Format the change from PREVIOUS minutes to MINUTES."
-  (cond ((zerop previous) (propertize "new" 'face 'success))
+  (cond ((zerop previous) (propertize "-" 'face 'shadow))
         ((= minutes previous) "0%")
         (t (let ((change (round (/ (* 100.0 (- minutes previous)) previous))))
              (propertize (format "%+d%%" change)
                          'face (if (> change 0) 'success 'error))))))
 
-(defun org-time-analytics--insert-row (text minutes properties &optional previous)
+(defun org-time-analytics--insert-row
+    (text minutes properties &optional previous show-change)
   "Insert a report row containing TEXT, MINUTES and PROPERTIES.
-When PREVIOUS is non-nil, also show the percentage change from it."
-  (let ((start (point)))
-    (insert (format "%-58s %9s %9s\n"
-                    (truncate-string-to-width text 58 nil nil "…")
-                    (org-time-analytics--duration minutes)
-                    (if previous
-                        (org-time-analytics--change minutes previous)
-                      "")))
-    (add-text-properties start (point) properties)))
+When SHOW-CHANGE is non-nil, show the change from PREVIOUS or `-' when
+there is no prior duration."
+  (let ((start (point))
+        (duration (org-time-analytics--duration minutes))
+        (change (cond ((not show-change) "")
+                      (previous (org-time-analytics--change minutes previous))
+                      (t (propertize "-" 'face 'shadow)))))
+    (insert (truncate-string-to-width text 58 nil nil "…")
+            (propertize " " 'display
+                        `(space :align-to ,(- 68 (string-width duration))))
+            duration
+            (propertize " " 'display '(space :align-to 70))
+            change "\n")
+    (add-text-properties start (point) properties)
+    (add-face-text-property start (point) 'fixed-pitch t)))
+
+(defun org-time-analytics--insert-task-row (entry)
+  "Insert a task row for ENTRY."
+  (org-time-analytics--insert-row
+   (concat "    " (plist-get entry :path))
+   (plist-get entry :minutes)
+   `(org-time-analytics-kind task
+     org-time-analytics-marker ,(plist-get entry :marker))
+   (plist-get entry :previous-minutes)
+   org-time-analytics-show-task-changes))
 
 (defun org-time-analytics--render ()
   "Render the current time report."
@@ -244,27 +286,31 @@ When PREVIOUS is non-nil, also show the percentage change from it."
     (insert (propertize
              "TAB/RET expand · RET visit · t add tag · G group · g refresh · b/f period · . reset\n\n"
              'face 'shadow))
-    (insert (propertize (format "%-58s %9s %9s\n"
-                                "Group / task" "Time" "Change")
-                        'face 'bold))
+    (let ((start (point)))
+      (insert (if org-time-analytics--group-by "Group / task" "Task")
+              (propertize " " 'display '(space :align-to 64))
+              "Time"
+              (propertize " " 'display '(space :align-to 70))
+              "Change\n")
+      (add-face-text-property start (point) '(bold fixed-pitch)))
     (insert (make-string 80 ?-) "\n")
     (if org-time-analytics--groups
-        (dolist (group org-time-analytics--groups)
-          (let* ((tag (plist-get group :tag))
-                 (expanded (member tag org-time-analytics--expanded-tags)))
-            (org-time-analytics--insert-row
-             (format "%s%s (%d)" (if expanded "▼ " "▶ ") tag
-                     (length (plist-get group :entries)))
-             (plist-get group :minutes)
-             `(org-time-analytics-kind tag org-time-analytics-tag ,tag)
-             (plist-get group :previous-minutes))
-            (when expanded
-              (dolist (entry (plist-get group :entries))
-                (org-time-analytics--insert-row
-                 (concat "    " (plist-get entry :path))
-                 (plist-get entry :minutes)
-                 `(org-time-analytics-kind task
-                   org-time-analytics-marker ,(plist-get entry :marker)))))))
+        (if (null org-time-analytics--group-by)
+            (dolist (entry (plist-get (car org-time-analytics--groups) :entries))
+              (org-time-analytics--insert-task-row entry))
+          (dolist (group org-time-analytics--groups)
+            (let* ((tag (plist-get group :tag))
+                   (expanded (member tag org-time-analytics--expanded-tags)))
+              (org-time-analytics--insert-row
+               (format "%s%s (%d)" (if expanded "▼ " "▶ ") tag
+                       (length (plist-get group :entries)))
+               (plist-get group :minutes)
+               `(org-time-analytics-kind tag org-time-analytics-tag ,tag)
+               (plist-get group :previous-minutes)
+               t)
+              (when expanded
+                (dolist (entry (plist-get group :entries))
+                  (org-time-analytics--insert-task-row entry))))))
       (insert "No timed entries.\n"))
     (goto-char (point-min))
     (forward-line (1- (min line (line-number-at-pos (point-max)))))
@@ -304,6 +350,7 @@ When PREVIOUS is non-nil, also show the percentage change from it."
 (defun org-time-analytics--group-description ()
   "Return a display name for the current grouping criterion."
   (pcase org-time-analytics--group-by
+    ('nil "task")
     ('tag "tag")
     ('todo "TODO state")
     ('category "CATEGORY")
@@ -313,10 +360,11 @@ When PREVIOUS is non-nil, also show the percentage change from it."
   "Change the report grouping CRITERION and refresh."
   (interactive
    (let* ((choice (completing-read "Group by: "
-                                   '("tag" "TODO state" "CATEGORY" "property")
+                                   '("none" "tag" "TODO state" "CATEGORY" "property")
                                    nil t))
           (criterion
            (pcase choice
+             ("none" nil)
              ("tag" 'tag)
              ("TODO state" 'todo)
              ("CATEGORY" 'category)

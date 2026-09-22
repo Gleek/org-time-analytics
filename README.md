@@ -59,7 +59,9 @@ dates. By default the prompt suggests seven days ago through tomorrow.
 
 The Change column compares each group with the immediately preceding period of
 equal length. Positive percentages use the `success` face and negative ones use
-the `error` face.
+the `error` face. Expanded tasks also show their change when the same task has
+time in the preceding period. A `-` marks groups and tasks with no duration in
+that period.
 
 ## Configuration
 
@@ -76,6 +78,19 @@ Grouping defaults to tags. Other defaults are:
 (setq org-time-analytics-group-by 'todo)
 (setq org-time-analytics-group-by 'category)
 (setq org-time-analytics-group-by '(property . "CLIENT"))
+```
+
+Set the grouping to nil for a flat task list. This is also available as
+`none` from the report's `G` menu:
+
+```elisp
+(setq org-time-analytics-group-by nil)
+```
+
+Task-level changes are enabled by default. To show changes only for groups:
+
+```elisp
+(setq org-time-analytics-show-task-changes nil)
 ```
 
 When grouping by tags, an entry with multiple tags contributes its full
