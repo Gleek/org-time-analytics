@@ -8,6 +8,16 @@
   (should (equal "1h" (org-time-analytics--duration 60)))
   (should (equal "3h20m" (org-time-analytics--duration 200))))
 
+(ert-deftest org-time-analytics-rolling-periods ()
+  (let ((now (encode-time 0 30 12 24 9 2026)))
+    (cl-letf (((symbol-function 'current-time) (lambda () now)))
+      (dolist (case '((one-day . 1) (seven-days . 7) (thirty-days . 30)))
+        (pcase-let ((`(,from ,to)
+                     (org-time-analytics--period-bounds (car case))))
+          (should (equal to now))
+          (should (= (float-time (time-subtract to from))
+                     (* (cdr case) 86400))))))))
+
 (ert-deftest org-time-analytics-format-integer-change ()
   (should (equal "+19%" (substring-no-properties
                          (org-time-analytics--change 1320 1110))))
@@ -70,6 +80,27 @@
       (let ((org-time-analytics-show-task-changes nil))
         (org-time-analytics--report-groups (seconds-to-time 100) (seconds-to-time 200))))
     (should-not (plist-member current-entry :previous-minutes))))
+
+(ert-deftest org-time-analytics-shows-previous-only-groups ()
+  (with-temp-buffer
+    (org-time-analytics-mode)
+    (let* ((org-time-analytics--from (seconds-to-time 100))
+           (org-time-analytics--to (seconds-to-time 200))
+           (org-time-analytics--group-by 'tag)
+           (current (list (list :tag "work" :minutes 60 :entries nil)))
+           (previous (list (list :tag "work" :minutes 30 :entries nil)
+                           (list :tag "family" :minutes 90 :entries nil)))
+           (calls 0))
+      (cl-letf (((symbol-function 'org-time-analytics-entries)
+                 (lambda (&rest _)
+                   (prog1 (if (zerop calls) current previous)
+                     (cl-incf calls)))))
+        (org-time-analytics-refresh))
+      (should (equal '("family")
+                     (mapcar (lambda (group) (plist-get group :tag))
+                             org-time-analytics--missed-groups)))
+      (should (string-match-p "Not covered this period" (buffer-string)))
+      (should (string-match-p "▶ family (0).*1h30m" (buffer-string))))))
 
 (ert-deftest org-time-analytics-groups-entry ()
   (with-temp-buffer

@@ -43,8 +43,10 @@ With the built-in `package-vc` via `use-package` (Emacs 30 or later):
   :commands (org-time-analytics-report))
 ```
 
-Run `M-x org-time-analytics-report`, then choose the start and exclusive end
-dates. By default the prompt suggests seven days ago through tomorrow.
+Run `M-x org-time-analytics-report` to see the past seven days compared with
+the seven days before them. Press `r` to choose one day, seven days, thirty days,
+or custom. The preset ranges end at the current time. Custom prompts for start
+and exclusive end dates.
 
 ## Report controls
 
@@ -52,6 +54,7 @@ dates. By default the prompt suggests seven days ago through tomorrow.
 |---|---|
 | `TAB`, `RET` | Expand/collapse a group; `RET` on a task visits it |
 | `G` | Group by tag, TODO state, CATEGORY, or a property |
+| `r` | Choose one day, seven days, thirty days, or custom dates |
 | `t` | Add a tag to the task at point |
 | `b`, `f` | Move backward or forward by one report period |
 | `.` | Return to the initially selected period |
@@ -70,6 +73,13 @@ function returning a list:
 
 ```elisp
 (setq org-time-analytics-files #'org-agenda-files)
+```
+
+The default period is `seven-days`. Set it to `one-day`, `thirty-days`, or
+`custom` if preferred:
+
+```elisp
+(setq org-time-analytics-default-period 'thirty-days)
 ```
 
 Grouping defaults to tags. Other defaults are:

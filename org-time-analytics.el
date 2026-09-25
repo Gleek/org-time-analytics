@@ -34,7 +34,6 @@
 
 (require 'org)
 (require 'org-ql)
-(require 'calendar)
 (require 'cl-lib)
 (require 'seq)
 (require 'subr-x)
@@ -72,6 +71,13 @@ shows a flat task list."
                  (cons (const property) string))
   :group 'org-time-analytics)
 
+(defcustom org-time-analytics-default-period 'seven-days
+  "Period shown when opening a report interactively.
+Choose `one-day', `seven-days', `thirty-days', or `custom'."
+  :type '(choice (const one-day) (const seven-days)
+                 (const thirty-days) (const custom))
+  :group 'org-time-analytics)
+
 (defcustom org-time-analytics-hours-per-day 24
   "Hours per day counted as the accounted-time denominator.
 The default of 24 measures accounted time against the full wall-clock
@@ -93,15 +99,10 @@ Tasks with no time in the preceding period have a blank Change column."
 (defvar-local org-time-analytics--initial-to nil)
 (defvar-local org-time-analytics--expanded-tags nil)
 (defvar-local org-time-analytics--groups nil)
+(defvar-local org-time-analytics--missed-groups nil)
 (defvar-local org-time-analytics--group-by nil)
 (defvar-local org-time-analytics--accounted-minutes 0)
 (defvar-local org-time-analytics--previous-accounted-minutes 0)
-
-(defun org-time-analytics--absolute-time (day)
-  "Return midnight on absolute calendar DAY."
-  (pcase-let ((`(,month ,date ,year)
-               (calendar-gregorian-from-absolute day)))
-    (encode-time 0 0 0 date month year)))
 
 (defun org-time-analytics--time (timestamp suffix)
   "Return time value for TIMESTAMP endpoint SUFFIX."
@@ -218,16 +219,19 @@ than one included tag) is not double-counted."
             (cl-incf total (plist-get entry :minutes))))))
     total))
 
+(defun org-time-analytics--previous-from (from to)
+  "Return the comparison start for FROM to TO."
+  (time-subtract from (time-subtract to from)))
+
 (defun org-time-analytics--report-groups (from to &optional group-by)
-  "Return a cons (GROUPS . ACCOUNTED) for FROM to TO.
-GROUPS carries changes from the preceding period.  ACCOUNTED is a cons
-of accounted minutes for this period and for the preceding period of
-the same length."
+  "Return (GROUPS CURRENT-MINUTES PREVIOUS-MINUTES MISSED) for FROM to TO.
+MISSED contains groups present only in the preceding period."
   (let* ((groups (org-time-analytics-entries from to nil group-by))
-         (previous-from (time-subtract from (time-subtract to from)))
+         (previous-from (org-time-analytics--previous-from from to))
          (previous (org-time-analytics-entries previous-from from nil group-by))
          (previous-by-tag (make-hash-table :test #'equal))
-         (previous-by-task (make-hash-table :test #'equal)))
+         (previous-by-task (make-hash-table :test #'equal))
+         (current-tags (make-hash-table :test #'equal)))
     (dolist (group previous)
       (puthash (plist-get group :tag) (plist-get group :minutes)
                previous-by-tag)
@@ -236,6 +240,7 @@ the same length."
           (puthash (org-time-analytics--entry-key entry)
                    (plist-get entry :minutes) previous-by-task))))
     (dolist (group groups)
+      (puthash (plist-get group :tag) t current-tags)
       (plist-put group :previous-minutes
                  (gethash (plist-get group :tag) previous-by-tag 0))
       (when org-time-analytics-show-task-changes
@@ -243,9 +248,13 @@ the same length."
           (plist-put entry :previous-minutes
                      (gethash (org-time-analytics--entry-key entry)
                               previous-by-task)))))
-    (cons groups
-          (cons (org-time-analytics--accounted-minutes groups)
-                (org-time-analytics--accounted-minutes previous)))))
+    (list groups
+          (org-time-analytics--accounted-minutes groups)
+          (org-time-analytics--accounted-minutes previous)
+          (when group-by
+            (cl-remove-if (lambda (group)
+                            (gethash (plist-get group :tag) current-tags))
+                          previous)))))
 
 (defun org-time-analytics--entry-key (entry)
   "Return a stable source-heading key for ENTRY."
@@ -316,10 +325,8 @@ there is no prior duration."
                                                          org-time-analytics--from))
                              86400.0)
                           org-time-analytics-hours-per-day 60))
-         (previous-from
-          (time-subtract org-time-analytics--from
-                         (time-subtract org-time-analytics--to
-                                        org-time-analytics--from))))
+         (previous-from (org-time-analytics--previous-from
+                         org-time-analytics--from org-time-analytics--to)))
     (erase-buffer)
     (let* ((labels (list (format "Time by %s" (org-time-analytics--group-description))
                          "Compared with"
@@ -327,21 +334,25 @@ there is no prior duration."
            (width (apply #'max (mapcar #'string-width labels))))
       (cl-destructuring-bind (time-label compared-label accounted-label) labels
         (insert (format "%s: %s to %s\n" (string-pad time-label width)
-                        (format-time-string "%F" org-time-analytics--from)
-                        (format-time-string "%F" org-time-analytics--to)))
+                        (format-time-string "%F %R" org-time-analytics--from)
+                        (format-time-string "%F %R" org-time-analytics--to)))
         (insert (format "%s: %s to %s\n" (string-pad compared-label width)
-                        (format-time-string "%F" previous-from)
-                        (format-time-string "%F" org-time-analytics--from)))
+                        (format-time-string "%F %R" previous-from)
+                        (format-time-string "%F %R" org-time-analytics--from)))
         (insert (format "%s: %s vs previous %s (%s)\n\n" (string-pad accounted-label width)
                         (org-time-analytics--accounted-share
                          org-time-analytics--accounted-minutes span-minutes)
                         (org-time-analytics--accounted-share
-                         org-time-analytics--previous-accounted-minutes span-minutes)
+                         org-time-analytics--previous-accounted-minutes
+                         (* (/ (float-time (time-subtract
+                                             org-time-analytics--from previous-from))
+                               86400.0)
+                            org-time-analytics-hours-per-day 60))
                         (org-time-analytics--change
                          org-time-analytics--accounted-minutes
                          org-time-analytics--previous-accounted-minutes)))))
     (insert (propertize
-             "TAB/RET expand · RET visit · t add tag · G group · g refresh · b/f period · . reset\n\n"
+             "TAB/RET expand · RET visit · t add tag · G group · r range · g refresh · b/f period · . reset\n\n"
              'face 'shadow))
     (let ((start (point)))
       (insert (if org-time-analytics--group-by "Group / task" "Task")
@@ -369,6 +380,20 @@ there is no prior duration."
                 (dolist (entry (plist-get group :entries))
                   (org-time-analytics--insert-task-row entry))))))
       (insert "No timed entries.\n"))
+    (when org-time-analytics--missed-groups
+      (insert "\n" (propertize "Not covered this period" 'face 'bold) "\n")
+      (insert (make-string 80 ?-) "\n")
+      (dolist (group org-time-analytics--missed-groups)
+        (let* ((tag (plist-get group :tag))
+               (expanded (member tag org-time-analytics--expanded-tags)))
+          (org-time-analytics--insert-row
+           (format "%s%s (%d)" (if expanded "▼ " "▶ ") tag
+                   (length (plist-get group :entries)))
+           (plist-get group :minutes)
+           `(org-time-analytics-kind tag org-time-analytics-tag ,tag))
+          (when expanded
+            (dolist (entry (plist-get group :entries))
+              (org-time-analytics--insert-task-row entry))))))
     (goto-char (point-min))
     (forward-line (1- (min line (line-number-at-pos (point-max)))))
     (back-to-indentation)))
@@ -403,7 +428,8 @@ there is no prior duration."
                                                     org-time-analytics--group-by)))
     (setq org-time-analytics--groups (car result)
           org-time-analytics--accounted-minutes (car (cdr result))
-          org-time-analytics--previous-accounted-minutes (cdr (cdr result))))
+          org-time-analytics--previous-accounted-minutes (nth 2 result)
+          org-time-analytics--missed-groups (nth 3 result)))
   (org-time-analytics--render))
 
 (defun org-time-analytics--group-description ()
@@ -465,6 +491,36 @@ there is no prior duration."
         org-time-analytics--to org-time-analytics--initial-to)
   (org-time-analytics-refresh))
 
+(defun org-time-analytics--period-bounds (period)
+  "Return the start and exclusive end times for PERIOD."
+  (if (eq period 'custom)
+      (list (org-read-date nil t nil "From: ")
+            (org-read-date nil t nil "To (exclusive): "))
+    (let ((days (pcase period
+                  ('one-day 1)
+                  ('seven-days 7)
+                  ('thirty-days 30)
+                  (_ (user-error "Unknown report period: %s" period))))
+          (now (current-time)))
+      (list (time-subtract now (days-to-time days)) now))))
+
+(defun org-time-analytics-change-period (period)
+  "Select report PERIOD and refresh."
+  (interactive
+   (list (pcase (completing-read
+                 "Period: " '("one day" "seven days" "thirty days" "custom")
+                 nil t)
+           ("one day" 'one-day)
+           ("seven days" 'seven-days)
+           ("thirty days" 'thirty-days)
+           ("custom" 'custom))))
+  (pcase-let ((`(,from ,to) (org-time-analytics--period-bounds period)))
+    (setq org-time-analytics--from from
+          org-time-analytics--to to
+          org-time-analytics--initial-from from
+          org-time-analytics--initial-to to)
+    (org-time-analytics-refresh)))
+
 (defun org-time-analytics-tag-task (tag)
   "Add TAG to the task at point and refresh the report."
   (interactive
@@ -492,31 +548,33 @@ there is no prior duration."
 (define-key org-time-analytics-mode-map (kbd "G") #'org-time-analytics-change-group)
 (define-key org-time-analytics-mode-map (kbd "b") #'org-time-analytics-previous-period)
 (define-key org-time-analytics-mode-map (kbd "f") #'org-time-analytics-next-period)
+(define-key org-time-analytics-mode-map (kbd "F") nil)
+(define-key org-time-analytics-mode-map (kbd "r") #'org-time-analytics-change-period)
 (define-key org-time-analytics-mode-map (kbd ".") #'org-time-analytics-reset-period)
 
 (define-derived-mode org-time-analytics-mode special-mode "Org-Time-Report"
   "Major mode for exploring time recorded in Org timestamps."
   (setq truncate-lines t))
 
-(defun org-time-analytics-report (from to)
+(defun org-time-analytics-report (&optional from to)
   "Show time grouped by `org-time-analytics-group-by' between FROM and TO.
-Interactively, default to seven days ago through tomorrow."
-  (interactive
-   (let* ((today (org-today))
-          (default-from (org-time-analytics--absolute-time (- today 7)))
-          (default-to (org-time-analytics--absolute-time (1+ today))))
-     (list (org-read-date nil t nil "From: " default-from)
-           (org-read-date nil t nil "To (exclusive): " default-to))))
-  (with-current-buffer (get-buffer-create org-time-analytics-buffer-name)
-    (org-time-analytics-mode)
-    (setq org-time-analytics--from from
-          org-time-analytics--to to
-          org-time-analytics--initial-from from
-          org-time-analytics--initial-to to
-          org-time-analytics--group-by org-time-analytics-group-by
-          org-time-analytics--expanded-tags nil)
-    (org-time-analytics-refresh)
-    (pop-to-buffer (current-buffer))))
+Interactively, use `org-time-analytics-default-period'."
+  (interactive)
+  (let ((period (unless (and from to) org-time-analytics-default-period)))
+    (unless (and from to)
+      (pcase-let ((`(,start ,end)
+                   (org-time-analytics--period-bounds period)))
+        (setq from start to end)))
+    (with-current-buffer (get-buffer-create org-time-analytics-buffer-name)
+      (org-time-analytics-mode)
+      (setq org-time-analytics--from from
+            org-time-analytics--to to
+            org-time-analytics--initial-from from
+            org-time-analytics--initial-to to
+            org-time-analytics--group-by org-time-analytics-group-by
+            org-time-analytics--expanded-tags nil)
+      (org-time-analytics-refresh)
+      (pop-to-buffer (current-buffer)))))
 
 (provide 'org-time-analytics)
 ;;; org-time-analytics.el ends here
